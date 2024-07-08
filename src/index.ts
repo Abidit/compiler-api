@@ -1,8 +1,23 @@
 import express from "express";
-import ivm from "isolated-vm";
+import { createWriteStream } from "fs";
+import { join } from "path";
+import archiver from "archiver";
+
+import {
+  createAndSaveChallenge,
+  deleteChallenge,
+  deletePlayerChallenge,
+  emptyChallenges,
+  emptyPlayerChallenges,
+  exportChallenges,
+  getAllChallenges,
+  getPlayerChallenges,
+  importChallenges,
+  submitChallenge,
+  updateAndSaveChallenge,
+} from "./services/challengeServices";
 
 const app = express();
-const port = 3030;
 
 app.use(express.json());
 
@@ -10,62 +25,144 @@ app.get("/", (req, res) => {
   res.send("Hello, TypeScript with Node.js!");
 });
 
-// app.post("/run", (req, res) => {
-//   const { code } = req.body;
+app.get("/challenges", (req, res) => {
+  const challenges = getAllChallenges();
+  res.json(challenges);
+});
 
-//   if (!code) {
-//     return res.status(400).send({ error: "No code provided" });
-//   }
-//   // let outputStr = "";
-//   const isolate = new ivm.Isolate({ memoryLimit: 8 /* MB */ });
-//   const script = isolate.compileScriptSync(code);
-//   const context = isolate.createContextSync();
-
-//   try {
-//     script.runSync(context);
-
-//     const result = script.release();
-
-//     res.send({ result });
-//   } catch (err) {
-//     const error = err as Error;
-//     res.status(500).send({ error: error.message });
-//   }
-// });
-
-app.post("/run", async (req, res) => {
-  const { code } = req.body;
-
-  if (!code) {
-    return res.status(400).send({ error: "No code provided" });
-  }
-
-  const isolate = new ivm.Isolate({ memoryLimit: 8 }); // 8 MB memory limit
-  const context = await isolate.createContext();
-  const jail = context.global;
-  await jail.set("global", jail.derefInto());
-
-  let logs: string[] = [];
-  await jail.set("log", function (...args: any) {
-    logs.push(args.join(" "));
+app.use("/db_dump", (req, res) => {
+  const output = createWriteStream("/tmp/dump.zip");
+  const archive = archiver("zip", {
+    zlib: { level: 9 }, // Sets the compression level.
   });
+  archive.pipe(output);
 
-  try {
-    const script = await isolate.compileScript(`
-      global.result = (
-        ${code}
-      )();
-    `);
+  // false means put all the files in root folder of zip
+  archive.directory(join(__dirname, "../db/"), false);
+  archive.finalize();
 
-    await script.run(context);
-    const result = await jail.get("result");
+  setTimeout(() => {
+    return res.sendFile("/tmp/dump.zip");
+  }, 500);
+});
 
-    res.send({ result: result });
-  } catch (err) {
-    res.status(500).send({ error: (err as Error).message });
+app.post("/challenges_import/python", async (req, res, next) => {
+  const { challenges } = req.body;
+  await importChallenges(challenges, "python");
+  res.json({ challenges });
+});
+
+app.post("/challenges_import/javascript", async (req, res, next) => {
+  const { challenges } = req.body;
+  await importChallenges(challenges, "javascript");
+  res.json({ challenges });
+});
+
+app.post("/challenges_import/java", async (req, res, next) => {
+  const { challenges } = req.body;
+  await importChallenges(challenges, "java");
+  res.json({ challenges });
+});
+
+app.post("/challenges_import/c", async (req, res, next) => {
+  const { challenges } = req.body;
+  await importChallenges(challenges, "c");
+  res.json({ challenges });
+});
+
+app.post("/challenges_import/cpp", async (req, res, next) => {
+  const { challenges } = req.body;
+  await importChallenges(challenges, "cpp");
+  res.json({ challenges });
+});
+
+app.post("/challenges_import", async (req, res, next) => {
+  const { challenges } = req.body;
+  await importChallenges(challenges, "");
+  res.json({ challenges });
+});
+
+app.post("/challenges", (req, res, next) => {
+  const { challenge } = req.body;
+  if (challenge.id) {
+    updateAndSaveChallenge(challenge)
+      .then((result) => {
+        res.json(result);
+      })
+      .catch((e) => console.error(e));
+  } else {
+    createAndSaveChallenge(challenge)
+      .then((result) => {
+        res.json(result);
+      })
+      .catch((e) => console.error(e));
   }
 });
 
-app.listen(port, () => {
-  console.log(`Server is running at http://localhost:${port}`);
+app.delete("/challenges", (req, res, next) => {
+  const { id } = req.body;
+  deleteChallenge(id)
+    .then((result) => {
+      res.json(result);
+    })
+    .catch((e) => console.error(e));
+});
+
+app.post("/empty_challenges", (req, res, next) => {
+  try {
+    emptyChallenges();
+    res.json([]);
+  } catch (e) {
+    console.error(e);
+  }
+});
+
+app.post("/empty_player_challenges", (req, res, next) => {
+  try {
+    emptyPlayerChallenges();
+    res.json([]);
+  } catch (e) {
+    console.error(e);
+  }
+});
+
+app.delete("/player_challenges", (req, res, next) => {
+  const { id } = req.body;
+  deletePlayerChallenge(id)
+    .then((result) => {
+      res.json(result);
+    })
+    .catch((e) => console.error(e));
+});
+
+app.post("/player_challenges", (req, res, next) => {
+  const { challenge } = req.body;
+  submitChallenge(challenge)
+    .then((result) => {
+      res.json(result);
+    })
+    .catch((e) => console.error(e));
+});
+
+app.get("/player_challenges", (req, res, next) => {
+  const history = getPlayerChallenges();
+  res.json(history);
+});
+
+app.get("/export_challenges", (req, res, next) => {
+  const queries = exportChallenges();
+  res.json(queries);
+});
+
+app.get("/test", async (req, res, next) => {
+  res.json({ status: "Deploy by Punit" });
+});
+
+// catch 404 and forward to error handler
+app.use(function (req, res, next) {
+  res.status(404).send("Not Found");
+});
+
+app.listen(process.env.PORT || 3000, () => {
+  console.log(`Listening on ${process.env.PORT || 3000}`);
 });
